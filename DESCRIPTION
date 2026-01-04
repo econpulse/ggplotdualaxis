@@ -1,0 +1,14 @@
+Package: ggplotdualaxis
+Title: Dual Axis Plots for ggplot2
+Version: 0.1.0
+Authors@R: person("Econpulse", "K", email = "econpulse@yahoo.com", role = c("aut", "cre"))
+Description: Provides wrapper functions and helpers to create dual y-axis plots in 'ggplot2' by transforming data to match the primary axis scale.
+License: MIT
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.2.3
+Imports:
+    ggplot2,
+    dplyr,
+    scales,
+    rlang

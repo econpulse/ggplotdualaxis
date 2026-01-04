@@ -1,0 +1,6 @@
+export(ggplot_dual_axis)
+export(scale_y_dual_axis)
+export(transform_dual_axis)
+import(dplyr)
+import(ggplot2)
+import(scales)
