@@ -10,9 +10,9 @@ Visualizing two variables with different scales on a single plot in `ggplot2` is
 
 ## Installation
 
-You can install the package purely from source (if this folder is the source):
+You can install the package directly from GitHub:
 ```r
-devtools::install("path/to/ggplotdualaxis")
+devtools::install_github("econpulse/ggplotdualaxis")
 ```
 
 ## Usage
