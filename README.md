@@ -7,6 +7,7 @@ Visualizing two variables with different scales on a single plot in `ggplot2` is
 -   **Automatic Scaling**: Calculates the optimal linear transformation to map the secondary variable onto the primary axis.
 -   **Pretty Breaks**: Ensures that text labels on the secondary axis are "nice" round numbers (multiples of 1, 2, 5, etc.) that align perfectly with the primary axis grid lines.
 -   **Flexible Labels**: Supports custom label formatters (e.g. `scales::label_percent`, `scales::label_dollar`) for both axes.
+-   **Alignment Control**: Choose how axes align (`"center"`, `"min"`, `"max"`, `"zero"`) to prevent awkward baselines.
 -   **Wrapper Function**: A single `ggplot_dual_axis()` call replaces complicated manual data manipulation.
 
 ## Installation
@@ -44,7 +45,9 @@ ggplot_dual_axis(
   secondary_var = "Exchange Rate",
   # Optional: Custom label formats
   labels = scales::label_dollar(),                 # Primary Axis
-  label_sec = scales::label_percent(accuracy = 0.1) # Secondary Axis
+  label_sec = scales::label_percent(accuracy = 0.1), # Secondary Axis
+  # Optional: Alignment
+  axis_align = "min" # Align bottoms of charts
 ) +
 geom_line(linewidth = 1) +
 theme_minimal()

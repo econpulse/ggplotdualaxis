@@ -65,7 +65,7 @@ ggplot_dual_axis <- function(data, mapping = aes(),
 #' @param secondary_var Name of the secondary variable (Right Axis).
 #' @param n_breaks Number of desired breaks for the primary axis.
 #' @param center_right_override Optional override for the right axis center (median).
-#' @param invert_right Boolean, whether to invert the right axis.
+#' @param axis_align Alignment constraint: "center" (default), "min", "max", or "zero".
 #'
 #' @return A dataframe with transformed values for the secondary variable,
 #'   along with a "dual_axis" attribute containing transformation parameters.
@@ -78,9 +78,12 @@ transform_dual_axis <- function(
     value_col = "value",
     n_breaks = 6,
     center_right_override = NULL,
-    invert_right = FALSE
+    invert_right = FALSE,
+    axis_align = c("center", "min", "max", "zero")
 ) {
   
+  axis_align <- match.arg(axis_align)
+
   # --- 1. Basic Checks ---
   if (!all(c(param_col, value_col) %in% names(df))) {
     stop("Specified columns not found in dataframe.")
@@ -101,15 +104,14 @@ transform_dual_axis <- function(
   # Primary Axis Breaks (The Driver)
   breaks_pri <- pretty(vals_pri, n = n_breaks)
   n <- length(breaks_pri)
-  span_pri <- diff(range(breaks_pri))
-  mid_pri  <- mean(breaks_pri)
+  # span_pri <- diff(range(breaks_pri)) # Unused
+  step_pri <- if(n > 1) diff(breaks_pri)[1] else 1
   
-  # Secondary Axis Range & Center
-  center_sec <- if (!is.null(center_right_override)) center_right_override else median(vals_sec, na.rm = TRUE)
+  # Secondary Axis Range
   span_sec_data <- diff(range(vals_sec, na.rm = TRUE))
   if (span_sec_data == 0) span_sec_data <- 1 # Prevent division by zero
   
-  # Helper for nice steps (1, 2, 5, 10...)
+  # Helper for nice steps
   nice_step <- function(x) {
     if (!is.finite(x) || x <= 0) return(1)
     pow <- 10^floor(log10(x))
@@ -118,61 +120,74 @@ transform_dual_axis <- function(
     base * pow
   }
   
-  # Calculate Initial Secondary Step to match tick count (n)
+  # Calculate Target Secondary Step
+  # We want roughly 'n' ticks covering the data range
   min_step_sec <- span_sec_data / (n - 1)
   step_sec <- nice_step(min_step_sec)
   
-  # Generate Candidate Labels centered around the median/center
-  # Snap the center to the nearest step to ensure "pretty" labels (e.g. 100, 110 vs 103.4, 113.4)
-  center_sec <- round(center_sec / step_sec) * step_sec
+  # Determine Pivot Points (Anchor) based on alignment
+  # pivot_pri and pivot_sec will be forced to align
   
-  k <- floor((n - 1) / 2)
-  labels_sec <- seq(center_sec - k * step_sec, by = step_sec, length.out = n)
-  
-  # Re-scale if the generated labels are too tight (zoomed in too much)
-  span_sec_labels <- diff(range(labels_sec))
-  # Ratio of Primary Span to Secondary Label Span
-  scaling_factor <- span_pri / span_sec_labels
-  
-  # Limit the zoom. If primary span covers too little of the secondary data relative to labels, expand secondary step.
-  # (Heuristic: Ensure we cover enough of the secondary data range)
-  ratio_max <- span_pri / span_sec_data
-  if (scaling_factor > ratio_max) {
-    adj_factor <- scaling_factor / ratio_max
-    step_sec_2 <- nice_step(step_sec * adj_factor)
-    labels_sec <- seq(center_sec - k * step_sec_2, by = step_sec_2, length.out = n)
-    span_sec_labels <- diff(range(labels_sec))
-    scaling_factor <- span_pri / span_sec_labels
+  if (axis_align == "center") {
+    pivot_pri <- mean(breaks_pri)
+    raw_pivot_sec <- if (!is.null(center_right_override)) center_right_override else median(vals_sec, na.rm = TRUE)
+  } else if (axis_align == "min") {
+    pivot_pri <- min(breaks_pri)
+    raw_pivot_sec <- min(vals_sec, na.rm = TRUE)
+  } else if (axis_align == "max") {
+    pivot_pri <- max(breaks_pri)
+    raw_pivot_sec <- max(vals_sec, na.rm = TRUE)
+  } else if (axis_align == "zero") {
+    pivot_pri <- 0
+    raw_pivot_sec <- 0
   }
   
-  mid_sec <- mean(labels_sec)
+  # Snap Pivot Secondary to Grid
+  # We want pivot_sec to be a multiple of step_sec.
+  pivot_sec <- round(raw_pivot_sec / step_sec) * step_sec
+  
+  # Calculate Scaling Factor based on Step Ratio
+  # We want step_sec (secondary) to map to step_pri (primary)
+  scaling_factor <- step_pri / step_sec
+  
+  # --- Zoom Optimization (Optional) ---
+  # If the heuristic scaling produces wildly bad fit (e.g. data is much larger/smaller than grid),
+  # standard dual axis logic sometimes iterates. 
+  # However, with strict alignment (Pivot + Step), we are strictly constrained.
+  # We stick to the simple scaling derived from step matching.
   
   # --- 3. Define Transformation Functions ---
-  # To plot Secondary on Primary Scale:
-  # y_plot = mid_pri + scaling_factor * (y_raw - mid_sec)
+  # y_plot - pivot_pri = scaling * (y_raw - pivot_sec)
+  # y_plot = pivot_pri + scaling * (y_raw - pivot_sec)
   
   if (invert_right) {
-    trans_forward <- function(y) mid_pri - scaling_factor * (y - mid_sec)
-    trans_reverse <- function(y) mid_sec - (y - mid_pri) / scaling_factor # maps back
-    labels_final  <- rev(labels_sec)
+    # If inverted, step_pri corresponds to -step_sec? 
+    # Or we flip the transformation relative to pivot.
+    # pivot_pri aligns with pivot_sec.
+    # increasing y_sec should decrease y_plot.
+    trans_forward <- function(y) pivot_pri - scaling_factor * (y - pivot_sec)
+    trans_reverse <- function(y) pivot_sec - (y - pivot_pri) / scaling_factor 
   } else {
-    trans_forward <- function(y) mid_pri + scaling_factor * (y - mid_sec)
-    trans_reverse <- function(y) mid_sec + (y - mid_pri) / scaling_factor
-    labels_final  <- labels_sec
+    trans_forward <- function(y) pivot_pri + scaling_factor * (y - pivot_sec)
+    trans_reverse <- function(y) pivot_sec + (y - pivot_pri) / scaling_factor
   }
   
-  # --- 4. Apply Transformation ---
+  # --- 4. Generate Secondary Labels matching Primary Breaks ---
+  # For each break on primary axis, what is the value on secondary?
+  labels_final <- trans_reverse(breaks_pri)
+  
+  # --- 5. Apply Transformation ---
   df_out <- df_sub
   is_sec <- df_out[[param_col]] == secondary_var
   df_out[[value_col]][is_sec] <- trans_forward(df_out[[value_col]][is_sec])
   
-  # --- 5. Return with Attributes ---
+  # --- 6. Return with Attributes ---
   attr(df_out, "dual_axis") <- list(
     primary_breaks   = breaks_pri,
     secondary_labels = labels_final,
     sec_name         = secondary_var,
     trans_forward    = trans_forward,
-    trans_reverse    = trans_reverse # Not strictly needed for sec_axis breaks but useful
+    trans_reverse    = trans_reverse
   )
   
   return(df_out)
@@ -240,6 +255,7 @@ scale_y_dual_axis <- function(data, name_pri = waiver(), name_sec = waiver(),
 #' @param name_sec Title for right axis.
 #' @param labels Label formatter for primary axis.
 #' @param label_sec Label formatter for secondary axis.
+#' @param axis_align Alignment constraint: "center" (default), "min", "max", or "zero".
 #' @param ... Additional arguments for transform_dual_axis (n_breaks, invert_right).
 #' 
 #' @return A secondary-axis-ready ggplot object.
@@ -251,6 +267,7 @@ ggplot_dual_axis <- function(data, mapping = aes(),
                              name_pri = primary_var, name_sec = secondary_var,
                              labels = waiver(),
                              label_sec = scales::label_number(accuracy = 0.01),
+                             axis_align = c("center", "min", "max", "zero"),
                              ...) {
   
   # Extract value column from mapping if not specified
@@ -271,6 +288,7 @@ ggplot_dual_axis <- function(data, mapping = aes(),
     secondary_var = secondary_var,
     param_col = group_col,
     value_col = value_col,
+    axis_align = axis_align,
     ... # e.g. n_breaks, invert_right
   )
   
