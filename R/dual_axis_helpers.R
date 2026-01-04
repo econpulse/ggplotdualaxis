@@ -179,70 +179,53 @@ transform_dual_axis <- function(
 }
 
 
-#' Add Dual Axis to ggplot
-#' 
-#' automatically detects parameters from transform_dual_axis
-#'
-#' @param name_pri Title for primary axis
-#' @param name_sec Title for secondary axis (default uses attribute)
-#' @param ... Arguments passed to scale_y_continuous
+#' @param labels Label formatter for primary axis (default waiver()).
+#' @param label_sec Label formatter for secondary axis (default scales::label_number(accuracy = 0.01)).
 #' @export
-scale_y_dual_axis <- function(data, name_pri = waiver(), name_sec = waiver(), ...) {
+scale_y_dual_axis <- function(data, name_pri = waiver(), name_sec = waiver(), 
+                              labels = waiver(), 
+                              label_sec = scales::label_number(accuracy = 0.01),
+                              ...) {
   
   params <- attr(data, "dual_axis")
   if (is.null(params)) {
     warning("No dual_axis attributes found on data. Using standard scale.")
-    return(scale_y_continuous(name = name_pri, ...))
+    return(scale_y_continuous(name = name_pri, labels = labels, ...))
   }
   
   if (inherits(name_sec, "waiver")) name_sec <- params$sec_name
   
-  # The 'trans' in sec_axis is inverse of what we did to data? 
-  # Actually: sec_axis transform usually takes the PRIMARY axis values (0..100) 
-  # and maps them to the labels we want to show.
-  #
-  # We transformed data: y_plot = f(y_raw).
-  # sec_axis asks: Given a y_plot value on the axis, what label do I show?
-  # Label = f_inv(y_plot).
-  #
-  # However, ggplot's sec_axis `trans` argument is: formula to convert primary axis values to secondary axis values.
-  # Which is exactly our trans_reverse function needed to get back to original values for labeling?
-  # Wait, no. `sec_axis(trans = ~ .)` means labels are 1:1.
-  # If we have points at y=10, and we want label "100", we need trans=~.*10.
-  # So we need the function that maps y_pri -> y_sec.
-  
-  # We have: y_pri = mid_pri + a * (y_sec - mid_sec)
-  # Solve for y_sec: y_sec = (y_pri - mid_pri)/a + mid_sec
-  # This IS params$trans_reverse.
-  
-  # BUT: We prefer to explicitly set the breaks and labels to ensure perfect alignment
-  # with the grid we calculated. We calculated `secondary_labels` to align exactly 
-  # with `primary_breaks`.
-  
   scale_y_continuous(
     name = name_pri,
     breaks = params$primary_breaks, 
-    # force breaks to match what we calculated
+    labels = labels,
     
     sec.axis = sec_axis(
-      transform = ~ ., # Identity transform, because we manually supply breaks/labels
+      transform = ~ ., # Identity transform
       breaks = params$primary_breaks, 
       labels = function(x) {
-        # We ignore x here because we derived specific labels for these specific breaks
-        # Map indices or just return the pre-calculated labels?
-        # ggplot might call this with different breaks if we are not careful.
-        # But we forced `breaks = params$primary_breaks` on the main axis.
-        if (length(x) != length(params$secondary_labels)) {
-           # Fallback if ggplot behaves oddly (e.g. zooming)
-           return(scales::label_number(accuracy = 0.01)(params$trans_reverse(x)))
+        # Transform back to original values
+        vals <- params$trans_reverse(x)
+        
+        # Apply formatter if provided
+        if (is.function(label_sec)) {
+          return(label_sec(vals))
         }
-        scales::label_number(accuracy = 0.01)(params$secondary_labels)
+        
+        # Fallback if label_sec is not a function (though default is)
+        # Check alignment just in case
+        if (length(x) == length(params$secondary_labels) && 
+            all(abs(x - params$primary_breaks) < 1e-8)) {
+           return(scales::label_number(accuracy = 0.01)(params$secondary_labels))
+        }
+        return(scales::label_number(accuracy = 0.01)(vals))
       },
       name = name_sec
     ),
     ...
   )
 }
+
 #' Wrapper for Dual Axis Plot
 #' 
 #' Combines transformation and plot initialization.
@@ -255,6 +238,8 @@ scale_y_dual_axis <- function(data, name_pri = waiver(), name_sec = waiver(), ..
 #' @param value_col Name of y-value column (optional, tries to detect from mapping).
 #' @param name_pri Title for left axis.
 #' @param name_sec Title for right axis.
+#' @param labels Label formatter for primary axis.
+#' @param label_sec Label formatter for secondary axis.
 #' @param ... Additional arguments for transform_dual_axis (n_breaks, invert_right).
 #' 
 #' @return A secondary-axis-ready ggplot object.
@@ -264,6 +249,8 @@ ggplot_dual_axis <- function(data, mapping = aes(),
                              group_col = "ticker",
                              value_col = NULL,
                              name_pri = primary_var, name_sec = secondary_var,
+                             labels = waiver(),
+                             label_sec = scales::label_number(accuracy = 0.01),
                              ...) {
   
   # Extract value column from mapping if not specified
@@ -291,7 +278,8 @@ ggplot_dual_axis <- function(data, mapping = aes(),
   p <- ggplot(data = df_trans, mapping = mapping)
   
   # 3. Add Scale (configured using the transformed data attributes)
-  p <- p + scale_y_dual_axis(df_trans, name_pri = name_pri, name_sec = name_sec)
+  p <- p + scale_y_dual_axis(df_trans, name_pri = name_pri, name_sec = name_sec, 
+                             labels = labels, label_sec = label_sec)
   
   return(p)
 }
